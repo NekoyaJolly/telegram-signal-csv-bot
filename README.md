@@ -24,11 +24,11 @@ flowchart TD
 実行場所: プロジェクトルート
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-[ -f .env ] || cp .env.example .env
+chmod +x scripts/setup_mac.sh
+./scripts/setup_mac.sh
 ```
+
+`scripts/setup_mac.sh` は Python 3.12 系を診断し、`.venv` 作成、pip更新、依存インストール、`.env` 作成、SQLite DB 初期化まで実行します。`.env` が既に存在する場合は上書きしません。
 
 `requirements.txt` はバージョン未固定です。新規の小規模常駐アプリとして、まず Python 3.12 系の最新互換版を使い、必要になった段階でロックファイルやバージョン固定へ移行しやすくするためです。
 
@@ -65,6 +65,8 @@ LOG_DIR=./logs
 
 ## ログチャンネルID
 
+`.env` に `TELEGRAM_BOT_TOKEN` を設定した後に実行します。
+
 実行場所: プロジェクトルート
 
 ```bash
@@ -72,7 +74,7 @@ source .venv/bin/activate
 python -m scripts.print_chat_id
 ```
 
-ログにしたいチャンネルまたはチャットへ Bot を追加し、メッセージを送ると `chat_id` が表示されます。その値を `.env` の `TELEGRAM_LOG_CHAT_ID` に設定します。
+TelegramでBotまたはログチャンネルに `test` と送ると、ターミナルに `chat_id` が表示されます。その値を `.env` の `TELEGRAM_LOG_CHAT_ID` に設定します。ログチャンネルで確認する場合は、先にBotをチャンネルへ追加してください。
 
 ## DB初期化
 
@@ -114,11 +116,14 @@ launchd 化する前に、必ず手動起動で動作確認してください。
 実行場所: プロジェクトルート
 
 ```bash
-python3 -m venv .venv
+chmod +x scripts/setup_mac.sh
+./scripts/setup_mac.sh
+```
+
+`.env` に `TELEGRAM_BOT_TOKEN` を設定した後、以下で起動します。
+
+```bash
 source .venv/bin/activate
-pip install -r requirements.txt
-[ -f .env ] || cp .env.example .env
-python -m scripts.init_db
 caffeinate -i python -m src.main
 ```
 
@@ -217,6 +222,39 @@ pytest
 `TELEGRAM_BOT_TOKEN が設定されていません`
 : `.env` の `TELEGRAM_BOT_TOKEN` を設定してください。
 
+`.venv/bin/activate がない`
+: 原因は `.venv` がまだ作成されていないことです。次を実行してください。
+
+```bash
+chmod +x scripts/setup_mac.sh
+./scripts/setup_mac.sh
+```
+
+`pyenv: python: command not found`
+: 原因は pyenv に Python は入っているが、`local` / `global` / `shell` のどれにも有効化されていない、または `python` ではなく `python3.12` を使う必要がある状態です。対応例:
+
+```bash
+pyenv local 3.12.10
+pyenv exec python -V
+```
+
+または:
+
+```bash
+python3.12 -m venv .venv
+```
+
+`python3.12: command not found`
+: 原因は Python 3.12 の実行コマンド名が違う、pyenv 管理下にあるが有効化されていない、または Python 3.12 自体が未導入であることです。対応:
+
+```bash
+pyenv versions
+pyenv local 3.12.10
+pyenv exec python -V
+```
+
+Python 3.12 系が見つからない場合、Homebrewやpyenvのインストールはこのリポジトリでは自動実行しません。手動で Python 3.12 を導入してから、もう一度 `./scripts/setup_mac.sh` を実行してください。
+
 `TELEGRAM_LOG_CHAT_ID` 設定時に `copyMessage` が失敗する
 : Bot がログチャンネルに追加されているか、投稿権限があるかを確認してください。失敗理由は `raw_messages.copy_error` と `logs/app.log` に残ります。
 
@@ -243,5 +281,6 @@ src/csv_exporter.py      # CSV 追記と全再生成
 src/telegram_bot.py      # Telegram polling と copyMessage
 scripts/init_db.py       # DB 初期化
 scripts/export_csv.py    # CSV 全再生成
+scripts/setup_mac.sh     # macOS 初回セットアップ
 scripts/print_chat_id.py # chat_id 確認
 ```
