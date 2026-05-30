@@ -1,66 +1,218 @@
-# agents-md-template
+# telegram-signal-csv-bot
 
-複数 AI コーディングエージェント (Claude Code / Cursor / Gemini 等) を 1 プロジェクトで運用するための **AGENTS.md 系ルールセットのテンプレート**。
+Telegram Bot に届いたトレードシグナル本文を polling で受信し、SQLite を正本として保存し、正規化 CSV を出力する macOS 常駐前提の Python アプリです。受信した元メッセージは、設定がある場合のみ Telegram ログチャンネルへ `copyMessage` します。
 
-`AGENTS.md` を正本とし、各 AI 固有のシム (`CLAUDE.md` / `.cursorrules` / `GEMINI.md`) が同じルールを参照する構造になっています。実プロジェクトで使い倒した結果を抽出してテンプレ化したもので、初期セットアップから「ルール分散による認識ズレ」「ファイル増殖」「ドキュメント増殖」を抑えられます。
+CSV は DB import、目視確認、外部連携用です。データの正本は常に SQLite です。
 
-## 含まれるもの
+## ワークフロー
 
-| ファイル | 内容 |
-|---|---|
-| `AGENTS.md` | 全エージェント共通ルールの正本テンプレ (§1 読み込み義務 / §2 型安全 / §3 コード品質 / §4 言語規約 / §5 ドキュメント運用 / §6 PR・コミット規約 + ドメイン原則のプレースホルダー + AI 推論品質ガイドライン) |
-| `CLAUDE.md` | Claude Code 固有シム (作業着手前宣言、チケット commit 規約) |
-| `.cursorrules` | Cursor 固有シム (Composer 確認、any/unknown 補完拒否) |
-| `GEMINI.md` | Gemini 固有シム (共通規約遵守、将来追記スロット) |
-| `scripts/README.md` | `scripts/` ディレクトリの登録表 + 用途分類 + one-shot 制限 |
-| `docs/architecture/WORKFLOW.md` | 自走 PR ワークフロー (Copilot inline 対応 / merge polling / post-merge 瞬間チェック / 自動 lint 修正) |
-| `templates/last-mile-rule.md` | Last-Mile Shared Context Protocol を採用するプロジェクト向けの AGENTS.md 挿入テンプレ ([姉妹リポジトリ](https://github.com/NekoyaJolly/last-mile-shared-context) の `templates/AGENTS.last-mile.md` と内容同期) |
-| `LICENSE` | MIT |
+```mermaid
+flowchart TD
+  A[Telegram message受信] --> B[raw_messagesへ保存]
+  B --> C[ログチャンネルへcopyMessage]
+  C --> D[本文パース]
+  D -->|成功| E[parsed_signalsへ保存]
+  E --> F[trade_signals.csvへ追記]
+  D -->|失敗| G[rejected_messagesへ保存]
+  G --> H[rejected_signals.csvへ追記]
+```
 
-## 主な思想
+`copyMessage` に失敗しても、SQLite 保存、パース、CSV 出力は継続します。
 
-- **正本 1 つ、シムは誘導**: ルールは `AGENTS.md` に集約。シムは「正本を読め」と誘導するだけ。AI ごとに微妙に違うルールセットを書かない
-- **新規ファイル作成は最終手段**: 「作業の副産物」ではなく「設計上の追加物」として扱う (§5.3)。PR 説明に責務 / 統合しなかった理由 / 寿命 / 削除条件を必須化
-- **ドキュメントはローリング運用**: 正本 + 現在進行中フェーズの指示書 + サマリー 1 件 の 3 種類だけ。完了したフェーズノートは正本に統合してアーカイブ / 削除する (§5.0)
-- **`any` / `unknown` 禁止 (本番コード)**: 外部入力はスキーマで narrow。型チェック抑止コメントの濫用も禁止 (§2)
+## セットアップ
 
-## 使い方
+実行場所: プロジェクトルート
 
-### A. GitHub Template repository として使う (推奨)
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
 
-1. GitHub 上で「Use this template」ボタンを押して新規リポジトリを作成
-2. 新リポジトリを `git clone`
-3. このリポジトリの `README.md` (本ファイル) を **新プロジェクトの README に上書き**
-4. `AGENTS.md` 冒頭のコメント指示に従い、プレースホルダーを埋める
-   - `<PROJECT_NAME>`: プロジェクト名
-   - `<DOMAIN>`: ドメイン名 (例: 自律トレーディング AI / SaaS 課金システム)
-   - `<PRIMARY_LANGUAGE>`: 主要言語 (例: 日本語 / English)
-   - 「ドメイン原則」セクション: プロジェクト固有の不変ルールを書く
-   - 「開発運用情報」セクション: コマンド / 構造 / 技術スタックをプロジェクトのものに書き換える
-5. 不要なシムを削除 (例: Cursor を使わないなら `.cursorrules` を削除)
-6. `scripts/` を使い始める時に `scripts/README.md` の登録表に追記
-7. 初回コミット
+`requirements.txt` はバージョン未固定です。新規の小規模常駐アプリとして、まず Python 3.12 系の最新互換版を使い、必要になった段階でロックファイルやバージョン固定へ移行しやすくするためです。
 
-### B. 既存リポジトリに導入する
+## Bot Token
 
-1. このリポジトリを `git clone` し、必要なファイルを既存リポジトリにコピー
-2. 上記 A の §4 〜 §6 と同じ作業
+1. Telegram で `@BotFather` を開きます。
+2. `/newbot` を実行します。
+3. Bot 名と username を入力します。
+4. 発行された token を `.env` の `TELEGRAM_BOT_TOKEN` に設定します。
 
-## プレースホルダー一覧
+Bot Token は `.env` のみに保存してください。launchd plist やソースコードに直接書かないでください。
 
-テンプレ化のために以下を残しています。実プロジェクトでは置換してください。
+## .env
 
-| プレースホルダー | 置換例 |
-|---|---|
-| `<PROJECT_NAME>` | `MyAwesomeApp` |
-| `<DOMAIN>` | `EC サイト` / `自律トレーディング AI` |
-| `<PRIMARY_LANGUAGE>` | `日本語` / `English` |
-| `<対象領域>` | サブディレクトリ AGENTS.md を作る時の領域名 |
-| `<build command>` | `npm run build` / `cargo build` 等 |
-| `<test command>` | `npm test` / `pytest` 等 |
-| `<dev command>` | `npm run dev` / `python manage.py runserver` 等 |
+実行場所: プロジェクトルート
 
+```bash
+cp .env.example .env
+```
 
-## ライセンス
+`.env` を編集します。
 
-[MIT](./LICENSE)
+```env
+TELEGRAM_BOT_TOKEN=123456:example
+TELEGRAM_LOG_CHAT_ID=
+SIGNAL_TIMEZONE=Asia/Tokyo
+SQLITE_DB_PATH=./data/signals.sqlite3
+CSV_OUTPUT_PATH=./output/trade_signals.csv
+REJECTED_CSV_OUTPUT_PATH=./output/rejected_signals.csv
+LOG_DIR=./logs
+```
+
+`TELEGRAM_LOG_CHAT_ID` が空の場合、`copyMessage` はスキップされます。
+
+## ログチャンネルID
+
+実行場所: プロジェクトルート
+
+```bash
+source .venv/bin/activate
+python -m scripts.print_chat_id
+```
+
+ログにしたいチャンネルまたはチャットへ Bot を追加し、メッセージを送ると `chat_id` が表示されます。その値を `.env` の `TELEGRAM_LOG_CHAT_ID` に設定します。
+
+## DB初期化
+
+実行場所: プロジェクトルート
+
+```bash
+source .venv/bin/activate
+python -m scripts.init_db
+```
+
+`SQLITE_DB_PATH` に SQLite DB が作成されます。既に作成済みの場合も安全に終了します。
+
+## 手動起動
+
+launchd 化する前に、必ず手動起動で動作確認してください。
+
+実行場所: プロジェクトルート
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python -m scripts.init_db
+caffeinate -i python -m src.main
+```
+
+この状態で確認すること:
+
+1. Telegram メッセージ受信
+2. `data/signals.sqlite3` への保存
+3. `output/trade_signals.csv` への出力
+4. `TELEGRAM_LOG_CHAT_ID` 設定時のログチャンネルへの `copyMessage`
+5. 不正メッセージの `rejected_messages` と `output/rejected_signals.csv` への保存
+
+## launchd常駐化
+
+手動起動で動作確認できた後に設定してください。
+
+実行場所: プロジェクトルート
+
+```bash
+source .venv/bin/activate
+./scripts/install_launch_agent.sh
+```
+
+このスクリプトは `launchd/com.nekoya.telegram-signal-csv-bot.plist.template` から実パス入り plist を生成し、`~/Library/LaunchAgents/com.nekoya.telegram-signal-csv-bot.plist` に配置します。
+
+launchd 側には Bot Token を書きません。`.env` は Python アプリ側で読み込みます。
+
+## 停止
+
+実行場所: 任意
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.nekoya.telegram-signal-csv-bot.plist"
+```
+
+状態確認:
+
+```bash
+launchctl print "gui/$(id -u)/com.nekoya.telegram-signal-csv-bot"
+```
+
+Terminal を閉じても launchd 起動なら Bot は動きます。Mac を再起動した後も `RunAtLoad` により起動します。ただし、Mac がスリープすると polling は止まる可能性があります。電源接続中はスリープしない設定にしてください。
+
+## ログ確認
+
+実行場所: プロジェクトルート
+
+```bash
+tail -f logs/app.log
+```
+
+launchd 化後に動かない場合:
+
+```bash
+tail -f logs/launchd.err.log
+tail -f logs/launchd.out.log
+```
+
+## CSV再生成
+
+SQLite を正本として、CSV を全再生成できます。
+
+実行場所: プロジェクトルート
+
+```bash
+source .venv/bin/activate
+python -m scripts.export_csv
+```
+
+生成対象:
+
+```txt
+output/trade_signals.csv
+output/rejected_signals.csv
+```
+
+CSV は UTF-8 BOM 付きで出力します。
+
+## テスト
+
+実行場所: プロジェクトルート
+
+```bash
+source .venv/bin/activate
+pytest
+```
+
+## よくあるエラー
+
+`TELEGRAM_BOT_TOKEN が設定されていません`
+: `.env` の `TELEGRAM_BOT_TOKEN` を設定してください。
+
+`TELEGRAM_LOG_CHAT_ID` 設定時に `copyMessage` が失敗する
+: Bot がログチャンネルに追加されているか、投稿権限があるかを確認してください。失敗理由は `raw_messages.copy_error` と `logs/app.log` に残ります。
+
+launchd では動かないが手動起動では動く
+: `logs/launchd.err.log` を確認してください。`.venv/bin/python` と `.env` が存在するかも確認してください。
+
+CSV が更新されない
+: SQLite に保存されていれば復旧できます。`python -m scripts.export_csv` で全再生成してください。
+
+## セキュリティ注意点
+
+- `.env` は Git 管理しません。
+- Bot Token をログ、README、launchd plist、ソースコードに直接書かないでください。
+- `.env.example` にはダミー値または空値のみを置いてください。
+- SQLite を正本にし、CSV だけを正本として扱わないでください。
+
+## 主なファイル
+
+```txt
+src/main.py              # polling 起動エントリーポイント
+src/parser.py            # シグナル本文パーサー
+src/database.py          # SQLite 初期化と保存処理
+src/csv_exporter.py      # CSV 追記と全再生成
+src/telegram_bot.py      # Telegram polling と copyMessage
+scripts/init_db.py       # DB 初期化
+scripts/export_csv.py    # CSV 全再生成
+scripts/print_chat_id.py # chat_id 確認
+```

@@ -13,3 +13,24 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# SQLite
+data/*.sqlite
+data/*.sqlite3
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# CSV 出力
+output/*.csv
+
+# ログ
+logs/*.log
+logs/*.out
+logs/*.err

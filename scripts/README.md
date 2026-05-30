@@ -36,7 +36,10 @@
 
 | ファイル | 用途 | 実行コマンド | 種別 | 削除条件 |
 |---|---|---|---|---|
-| (登録待ち) | 新規追加分から本表に積む | — | — | — |
+| `scripts/init_db.py` | SQLite DB の初期化 | `python -m scripts.init_db` | `maintenance/` | アプリが SQLite を使わなくなったとき |
+| `scripts/export_csv.py` | SQLite から CSV を全再生成 | `python -m scripts.export_csv` | `maintenance/` | CSV 出力機能を廃止したとき |
+| `scripts/print_chat_id.py` | Telegram の chat_id 確認 | `python -m scripts.print_chat_id` | `dev/` | Telegram 連携を廃止したとき |
+| `scripts/install_launch_agent.sh` | macOS LaunchAgent の生成と登録 | `./scripts/install_launch_agent.sh` | `maintenance/` | launchd 運用を廃止したとき |
 
 ## 4. one-shot スクリプトの制限
 
