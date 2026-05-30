@@ -37,6 +37,7 @@
 | ファイル | 用途 | 実行コマンド | 種別 | 削除条件 |
 |---|---|---|---|---|
 | `scripts/init_db.py` | SQLite DB の初期化 | `python -m scripts.init_db` | `maintenance/` | アプリが SQLite を使わなくなったとき |
+| `scripts/reset_db.py` | ローカルSQLite DBをバックアップして再初期化 | `python -m scripts.reset_db` | `maintenance/` | SQLite スキーマ変更運用を廃止したとき |
 | `scripts/export_csv.py` | SQLite から CSV を全再生成 | `python -m scripts.export_csv` | `maintenance/` | CSV 出力機能を廃止したとき |
 | `scripts/print_chat_id.py` | Telegram の chat_id 確認 | `python -m scripts.print_chat_id` | `dev/` | Telegram 連携を廃止したとき |
 | `scripts/setup_mac.sh` | macOS ローカル初回セットアップ | `./scripts/setup_mac.sh` | `dev/` | macOS ローカル運用を廃止したとき |

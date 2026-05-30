@@ -25,6 +25,7 @@ __pycache__/
 data/*.sqlite
 data/*.sqlite3
 data/*.db
+data/*.bak
 data/*.sqlite-wal
 data/*.sqlite-shm
 data/*.sqlite3-wal

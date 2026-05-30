@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+import pytest
+
+from scripts.reset_db import build_reset_targets, delete_existing_paths, list_reset_paths
+from src.config import AppConfig
 from src.database import (
+    DatabaseSchemaError,
     connect,
     init_db,
     save_parsed_signal,
@@ -85,6 +91,97 @@ def test_copy_error_can_be_saved(tmp_path: Path) -> None:
 
     assert row["copied_to_log_channel"] == 0
     assert row["copy_error"] == "Forbidden"
+
+
+def test_init_db_creates_entry_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.sqlite3"
+
+    init_db(db_path)
+    connection = connect(db_path)
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(parsed_signals)").fetchall()}
+
+    assert {"entry1", "entry2", "entry3", "entry4", "entry5"}.issubset(columns)
+
+
+def test_old_parsed_signals_schema_raises_clear_error(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.sqlite3"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE parsed_signals (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          raw_message_id INTEGER NOT NULL,
+          side TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          timeframe TEXT NOT NULL,
+          entry_type TEXT NOT NULL,
+          entry_min TEXT NOT NULL,
+          entry_max TEXT NOT NULL,
+          entry_raw TEXT NOT NULL,
+          tp1 TEXT,
+          tp2 TEXT,
+          tp3 TEXT,
+          tp4 TEXT,
+          tp5 TEXT,
+          sl TEXT NOT NULL,
+          signal_time TEXT NOT NULL,
+          signal_time_utc TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(DatabaseSchemaError) as error:
+        init_db(db_path)
+
+    assert "entry1" in str(error.value)
+    assert "python -m scripts.reset_db" in str(error.value)
+
+
+def test_reset_db_targets_are_built_from_config_paths(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.sqlite3"
+    config = AppConfig(
+        telegram_bot_token="",
+        telegram_log_chat_id=None,
+        signal_timezone=ZoneInfo("Asia/Tokyo"),
+        sqlite_db_path=db_path,
+        csv_output_path=tmp_path / "trade_signals.csv",
+        rejected_csv_output_path=tmp_path / "rejected_signals.csv",
+        log_dir=tmp_path / "logs",
+    )
+
+    targets = list_reset_paths(build_reset_targets(config))
+
+    assert targets == [
+        db_path,
+        Path(f"{db_path}-wal"),
+        Path(f"{db_path}-shm"),
+        tmp_path / "trade_signals.csv",
+        tmp_path / "rejected_signals.csv",
+    ]
+
+
+def test_reset_db_deletes_only_local_data_and_keeps_env(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.sqlite3"
+    target_paths = [
+        db_path,
+        Path(f"{db_path}-wal"),
+        Path(f"{db_path}-shm"),
+        tmp_path / "trade_signals.csv",
+        tmp_path / "rejected_signals.csv",
+    ]
+    env_path = tmp_path / ".env"
+    for target_path in target_paths:
+        target_path.write_text("delete me", encoding="utf-8")
+    env_path.write_text("TELEGRAM_BOT_TOKEN=secret", encoding="utf-8")
+
+    deleted_count = delete_existing_paths(target_paths)
+
+    assert deleted_count == 5
+    assert all(not target_path.exists() for target_path in target_paths)
+    assert env_path.read_text(encoding="utf-8") == "TELEGRAM_BOT_TOKEN=secret"
 
 
 def _connection(tmp_path: Path) -> sqlite3.Connection:

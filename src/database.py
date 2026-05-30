@@ -9,6 +9,37 @@ from src.models import ParsedSignalData, RawMessageInput, RawMessageRecord, RawM
 from src.parser import SignalParseError, parse_signal
 
 
+REQUIRED_PARSED_SIGNAL_COLUMNS = {
+    "id",
+    "raw_message_id",
+    "side",
+    "symbol",
+    "timeframe",
+    "entry_type",
+    "entry_min",
+    "entry_max",
+    "entry_raw",
+    "entry1",
+    "entry2",
+    "entry3",
+    "entry4",
+    "entry5",
+    "tp1",
+    "tp2",
+    "tp3",
+    "tp4",
+    "tp5",
+    "sl",
+    "signal_time",
+    "signal_time_utc",
+    "created_at",
+}
+
+
+class DatabaseSchemaError(Exception):
+    """既存SQLite DBのスキーマが現在のコードと一致しない場合の例外。"""
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS raw_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,7 +119,25 @@ def init_db(db_path: Path) -> None:
 
     with connect(db_path) as connection:
         connection.executescript(SCHEMA_SQL)
+        validate_schema(connection, db_path)
         connection.commit()
+
+
+def validate_schema(connection: sqlite3.Connection, db_path: Path) -> None:
+    """古いSQLiteスキーマを早期検出し、復旧手順が分かるエラーにする。"""
+
+    rows = connection.execute("PRAGMA table_info(parsed_signals)").fetchall()
+    existing_columns = {str(row["name"]) for row in rows}
+    missing_columns = sorted(REQUIRED_PARSED_SIGNAL_COLUMNS - existing_columns)
+    if missing_columns:
+        missing_text = ", ".join(missing_columns)
+        raise DatabaseSchemaError(
+            "SQLite DB の parsed_signals テーブルが古いスキーマです。"
+            f"不足カラム: {missing_text}。"
+            f"対象DB: {db_path}。"
+            "初期開発段階のため、必要なデータを退避したうえで "
+            "`python -m scripts.reset_db` と `python -m scripts.init_db` を実行してください。"
+        )
 
 
 def utc_now_iso() -> str:
