@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS parsed_signals (
   entry_min TEXT NOT NULL,
   entry_max TEXT NOT NULL,
   entry_raw TEXT NOT NULL,
+  entry1 TEXT,
+  entry2 TEXT,
+  entry3 TEXT,
+  entry4 TEXT,
+  entry5 TEXT,
   tp1 TEXT,
   tp2 TEXT,
   tp3 TEXT,
@@ -164,8 +169,9 @@ def save_parsed_signal(
         """
         INSERT OR IGNORE INTO parsed_signals (
           raw_message_id, side, symbol, timeframe, entry_type, entry_min, entry_max, entry_raw,
+          entry1, entry2, entry3, entry4, entry5,
           tp1, tp2, tp3, tp4, tp5, sl, signal_time, signal_time_utc, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             raw_message_id,
@@ -176,6 +182,11 @@ def save_parsed_signal(
             signal.entry_min,
             signal.entry_max,
             signal.entry_raw,
+            signal.entry1,
+            signal.entry2,
+            signal.entry3,
+            signal.entry4,
+            signal.entry5,
             signal.tp1,
             signal.tp2,
             signal.tp3,
@@ -290,6 +301,11 @@ def fetch_parsed_signal_export_rows(connection: sqlite3.Connection) -> list[sqli
           parsed.entry_min,
           parsed.entry_max,
           parsed.entry_raw,
+          parsed.entry1,
+          parsed.entry2,
+          parsed.entry3,
+          parsed.entry4,
+          parsed.entry5,
           parsed.tp1,
           parsed.tp2,
           parsed.tp3,

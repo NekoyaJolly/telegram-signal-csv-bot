@@ -27,7 +27,7 @@ flowchart TD
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+[ -f .env ] || cp .env.example .env
 ```
 
 `requirements.txt` はバージョン未固定です。新規の小規模常駐アプリとして、まず Python 3.12 系の最新互換版を使い、必要になった段階でロックファイルやバージョン固定へ移行しやすくするためです。
@@ -46,7 +46,7 @@ Bot Token は `.env` のみに保存してください。launchd plist やソー
 実行場所: プロジェクトルート
 
 ```bash
-cp .env.example .env
+[ -f .env ] || cp .env.example .env
 ```
 
 `.env` を編集します。
@@ -85,6 +85,28 @@ python -m scripts.init_db
 
 `SQLITE_DB_PATH` に SQLite DB が作成されます。既に作成済みの場合も安全に終了します。
 
+初期実装段階のため、既存 SQLite ファイルへのマイグレーションスクリプトはまだ用意していません。`parsed_signals` のスキーマ変更後に既存DBを使う場合は、必要に応じて `data/signals.sqlite3` を退避または削除してから `python -m scripts.init_db` を実行し直してください。
+
+## Entry仕様
+
+`Entry` は1〜5点まで許容します。
+
+```txt
+Entry | 4533
+Entry | 4563 - 4568
+Entry | 4563 - 4568 - 4570 - 4575 - 4580
+```
+
+保存仕様:
+
+- 1点: `entry_type = single`
+- 2点: `entry_type = range`
+- 3〜5点: `entry_type = multi`
+- 6点以上: rejected として保存
+- `entry_min` は最小値、`entry_max` は最大値
+- `entry_raw` は `Entry |` より後ろの文字列を trim した値
+- `entry1`〜`entry5` は元の順番で保存し、存在しない値はNULLまたはCSV空欄
+
 ## 手動起動
 
 launchd 化する前に、必ず手動起動で動作確認してください。
@@ -95,7 +117,7 @@ launchd 化する前に、必ず手動起動で動作確認してください。
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+[ -f .env ] || cp .env.example .env
 python -m scripts.init_db
 caffeinate -i python -m src.main
 ```
@@ -157,6 +179,7 @@ tail -f logs/launchd.out.log
 ## CSV再生成
 
 SQLite を正本として、CSV を全再生成できます。
+raw message 保存後にアプリが停止した場合でも、再起動時の未処理 raw 再処理後に CSV は SQLite から全再生成されます。CSV 欠落や手動修復が必要な場合も、SQLite が正本なので次のコマンドで復旧できます。
 
 実行場所: プロジェクトルート
 
@@ -173,6 +196,12 @@ output/rejected_signals.csv
 ```
 
 CSV は UTF-8 BOM 付きで出力します。
+
+`trade_signals.csv` のカラム順:
+
+```txt
+signal_id,source,telegram_chat_id,telegram_message_id,side,symbol,timeframe,entry_type,entry_min,entry_max,entry_raw,entry1,entry2,entry3,entry4,entry5,tp1,tp2,tp3,tp4,tp5,sl,signal_time,signal_time_utc,received_at,raw_text
+```
 
 ## テスト
 

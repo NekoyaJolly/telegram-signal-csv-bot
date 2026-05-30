@@ -26,11 +26,12 @@ def parse_signal(raw_text: str, signal_timezone: ZoneInfo) -> ParsedSignalData:
 
     header = _parse_header(lines[0])
     entry_raw = _extract_pipe_value(lines, "Entry")
-    entry_type, entry_min, entry_max = _parse_entry(entry_raw)
+    entry_type, entry_min, entry_max, entries = _parse_entry(entry_raw)
     take_profits = _parse_take_profits(_extract_pipe_value(lines, "TP"))
     sl = _parse_single_price(_extract_pipe_value(lines, "SL"), "SL")
     signal_time, signal_time_utc = _parse_signal_time(lines, signal_timezone)
 
+    padded_entries = entries + [None] * (5 - len(entries))
     padded_take_profits = take_profits + [None] * (5 - len(take_profits))
     return ParsedSignalData(
         side=header["side"],
@@ -40,6 +41,11 @@ def parse_signal(raw_text: str, signal_timezone: ZoneInfo) -> ParsedSignalData:
         entry_min=entry_min,
         entry_max=entry_max,
         entry_raw=entry_raw,
+        entry1=padded_entries[0],
+        entry2=padded_entries[1],
+        entry3=padded_entries[2],
+        entry4=padded_entries[3],
+        entry5=padded_entries[4],
         tp1=padded_take_profits[0],
         tp2=padded_take_profits[1],
         tp3=padded_take_profits[2],
@@ -81,18 +87,19 @@ def _split_price_list(value: str) -> list[str]:
     return parts
 
 
-def _parse_entry(value: str) -> tuple[str, str, str]:
+def _parse_entry(value: str) -> tuple[str, str, str, list[str]]:
     parts = _split_price_list(value)
+    if len(parts) > 5:
+        raise SignalParseError("Entry は最大5点までです")
+    entries = [_parse_single_price(part, "Entry") for part in parts]
+    entry_values = [_parse_price_decimal(entry, "Entry") for entry in entries]
+    entry_min = str(min(entry_values))
+    entry_max = str(max(entry_values))
     if len(parts) == 1:
-        price = _parse_single_price(parts[0], "Entry")
-        return "single", price, price
+        return "single", entry_min, entry_max, entries
     if len(parts) == 2:
-        first = _parse_price_decimal(parts[0], "Entry")
-        second = _parse_price_decimal(parts[1], "Entry")
-        if first <= second:
-            return "range", str(first), str(second)
-        return "range", str(second), str(first)
-    raise SignalParseError("Entry は単独価格または2点レンジのみ許可されています")
+        return "range", entry_min, entry_max, entries
+    return "multi", entry_min, entry_max, entries
 
 
 def _parse_take_profits(value: str) -> list[str]:

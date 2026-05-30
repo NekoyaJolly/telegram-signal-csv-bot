@@ -43,6 +43,9 @@ def test_entry_range_is_parsed() -> None:
     assert signal.entry_min == "4563"
     assert signal.entry_max == "4568"
     assert signal.entry_raw == "4563 - 4568"
+    assert signal.entry1 == "4563"
+    assert signal.entry2 == "4568"
+    assert signal.entry3 is None
 
 
 def test_entry_reversed_range_is_saved_as_min_max() -> None:
@@ -51,6 +54,8 @@ def test_entry_reversed_range_is_saved_as_min_max() -> None:
     assert signal.entry_min == "4563"
     assert signal.entry_max == "4568"
     assert signal.entry_raw == "4568 - 4563"
+    assert signal.entry1 == "4568"
+    assert signal.entry2 == "4563"
 
 
 def test_single_entry_is_parsed() -> None:
@@ -60,6 +65,8 @@ def test_single_entry_is_parsed() -> None:
     assert signal.entry_min == "4533"
     assert signal.entry_max == "4533"
     assert signal.entry_raw == "4533"
+    assert signal.entry1 == "4533"
+    assert signal.entry2 is None
 
 
 def test_range_entry_type_is_range() -> None:
@@ -68,7 +75,32 @@ def test_range_entry_type_is_range() -> None:
     assert signal.entry_type == "range"
 
 
-@pytest.mark.parametrize("entry", ["4563 - 4568 - 4570", "abc"])
+@pytest.mark.parametrize(
+    ("entry", "expected_type", "expected_min", "expected_max", "expected_entries"),
+    [
+        ("4563 - 4568 - 4570", "multi", "4563", "4570", ["4563", "4568", "4570", None, None]),
+        ("4563 - 4568 - 4570 - 4575", "multi", "4563", "4575", ["4563", "4568", "4570", "4575", None]),
+        ("4563 - 4568 - 4570 - 4575 - 4580", "multi", "4563", "4580", ["4563", "4568", "4570", "4575", "4580"]),
+        ("4570 - 4563 - 4580 - 4568", "multi", "4563", "4580", ["4570", "4563", "4580", "4568", None]),
+    ],
+)
+def test_multi_entry_is_parsed(
+    entry: str,
+    expected_type: str,
+    expected_min: str,
+    expected_max: str,
+    expected_entries: list[str | None],
+) -> None:
+    signal = parse_signal(_message("SELL XAUUSD 1m", entry=entry), TOKYO)
+
+    assert signal.entry_type == expected_type
+    assert signal.entry_min == expected_min
+    assert signal.entry_max == expected_max
+    assert signal.entry_raw == entry
+    assert [signal.entry1, signal.entry2, signal.entry3, signal.entry4, signal.entry5] == expected_entries
+
+
+@pytest.mark.parametrize("entry", ["4563 - 4568 - 4570 - 4575 - 4580 - 4590", "abc"])
 def test_invalid_entry_raises_error(entry: str) -> None:
     with pytest.raises(SignalParseError):
         parse_signal(_message("SELL XAUUSD 1m", entry=entry), TOKYO)

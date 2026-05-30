@@ -34,6 +34,11 @@ class ParsedSignalData:
     entry_min: str
     entry_max: str
     entry_raw: str
+    entry1: str | None
+    entry2: str | None
+    entry3: str | None
+    entry4: str | None
+    entry5: str | None
     tp1: str | None
     tp2: str | None
     tp3: str | None

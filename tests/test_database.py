@@ -41,10 +41,18 @@ def test_parsed_signal_can_be_saved(tmp_path: Path) -> None:
     raw_id = save_raw_message(connection, _raw_message()).raw_message_id
 
     parsed_id = save_parsed_signal(connection, raw_id, _parsed_signal())
-    row = connection.execute("SELECT side, entry_type FROM parsed_signals WHERE id = ?", (parsed_id,)).fetchone()
+    row = connection.execute(
+        "SELECT side, entry_type, entry1, entry2, entry3, entry4, entry5 FROM parsed_signals WHERE id = ?",
+        (parsed_id,),
+    ).fetchone()
 
     assert row["side"] == "SELL"
     assert row["entry_type"] == "range"
+    assert row["entry1"] == "4563"
+    assert row["entry2"] == "4568"
+    assert row["entry3"] is None
+    assert row["entry4"] is None
+    assert row["entry5"] is None
 
 
 def test_rejected_message_can_be_saved(tmp_path: Path) -> None:
@@ -105,6 +113,11 @@ def _parsed_signal() -> ParsedSignalData:
         entry_min="4563",
         entry_max="4568",
         entry_raw="4563 - 4568",
+        entry1="4563",
+        entry2="4568",
+        entry3=None,
+        entry4=None,
+        entry5=None,
         tp1="4559",
         tp2="4551",
         tp3="4533",

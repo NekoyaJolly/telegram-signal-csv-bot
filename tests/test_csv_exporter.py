@@ -3,10 +3,50 @@ from __future__ import annotations
 import csv
 import sqlite3
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+from src.config import AppConfig
 from src.csv_exporter import regenerate_rejected_signals_csv, regenerate_trade_signals_csv
-from src.database import connect, init_db, save_parsed_signal, save_raw_message, save_rejected_message
+from src.database import (
+    connect,
+    init_db,
+    reprocess_unprocessed_messages,
+    save_parsed_signal,
+    save_raw_message,
+    save_rejected_message,
+)
+from src.main import regenerate_csv_after_reprocess
 from src.models import ParsedSignalData, RawMessageInput
+
+
+EXPECTED_TRADE_COLUMNS = [
+    "signal_id",
+    "source",
+    "telegram_chat_id",
+    "telegram_message_id",
+    "side",
+    "symbol",
+    "timeframe",
+    "entry_type",
+    "entry_min",
+    "entry_max",
+    "entry_raw",
+    "entry1",
+    "entry2",
+    "entry3",
+    "entry4",
+    "entry5",
+    "tp1",
+    "tp2",
+    "tp3",
+    "tp4",
+    "tp5",
+    "sl",
+    "signal_time",
+    "signal_time_utc",
+    "received_at",
+    "raw_text",
+]
 
 
 def test_trade_signals_csv_can_be_generated(tmp_path: Path) -> None:
@@ -19,6 +59,7 @@ def test_trade_signals_csv_can_be_generated(tmp_path: Path) -> None:
     assert count == 1
     assert rows[0]["signal_id"] == "123_456"
     assert rows[0]["side"] == "SELL"
+    assert list(rows[0].keys()) == EXPECTED_TRADE_COLUMNS
 
 
 def test_rejected_signals_csv_can_be_generated(tmp_path: Path) -> None:
@@ -57,6 +98,11 @@ def test_entry_columns_are_exported(tmp_path: Path) -> None:
     assert rows[0]["entry_min"] == "4563"
     assert rows[0]["entry_max"] == "4568"
     assert rows[0]["entry_raw"] == "4563 - 4568"
+    assert rows[0]["entry1"] == "4563"
+    assert rows[0]["entry2"] == "4568"
+    assert rows[0]["entry3"] == ""
+    assert rows[0]["entry4"] == ""
+    assert rows[0]["entry5"] == ""
 
 
 def test_csv_is_written_with_utf8_bom(tmp_path: Path) -> None:
@@ -66,6 +112,33 @@ def test_csv_is_written_with_utf8_bom(tmp_path: Path) -> None:
     regenerate_trade_signals_csv(connection, output_path)
 
     assert output_path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_csv_is_regenerated_after_startup_reprocess(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.sqlite3"
+    init_db(db_path)
+    connection = connect(db_path)
+    save_raw_message(connection, _raw_message(raw_text=_valid_raw_text(), message_id="456"))
+    save_raw_message(connection, _raw_message(raw_text="SELL XAUUSD 1m", message_id="457"))
+    config = AppConfig(
+        telegram_bot_token="",
+        telegram_log_chat_id=None,
+        signal_timezone=ZoneInfo("Asia/Tokyo"),
+        sqlite_db_path=db_path,
+        csv_output_path=tmp_path / "trade_signals.csv",
+        rejected_csv_output_path=tmp_path / "rejected_signals.csv",
+        log_dir=tmp_path / "logs",
+    )
+
+    parsed_count, rejected_count = reprocess_unprocessed_messages(connection, config.signal_timezone)
+    regenerate_csv_after_reprocess(connection, config, parsed_count, rejected_count)
+
+    trade_rows = _read_csv(config.csv_output_path)
+    rejected_rows = _read_csv(config.rejected_csv_output_path)
+    assert parsed_count == 1
+    assert rejected_count == 1
+    assert trade_rows[0]["signal_id"] == "123_456"
+    assert rejected_rows[0]["signal_id"] == "123_457"
 
 
 def _seed_parsed_signal(tmp_path: Path) -> sqlite3.Connection:
@@ -82,13 +155,15 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(csv_file))
 
 
-def _raw_message() -> RawMessageInput:
+def _raw_message(
+    raw_text: str = "SELL XAUUSD 1m\nEntry | 4563 - 4568", message_id: str = "456"
+) -> RawMessageInput:
     return RawMessageInput(
         source="telegram",
         telegram_chat_id="123",
-        telegram_message_id="456",
+        telegram_message_id=message_id,
         received_at="2026-03-22T10:28:00Z",
-        raw_text="SELL XAUUSD 1m\nEntry | 4563 - 4568",
+        raw_text=raw_text,
         raw_update_json='{"ok": true}',
     )
 
@@ -102,6 +177,11 @@ def _parsed_signal() -> ParsedSignalData:
         entry_min="4563",
         entry_max="4568",
         entry_raw="4563 - 4568",
+        entry1="4563",
+        entry2="4568",
+        entry3=None,
+        entry4=None,
+        entry5=None,
         tp1="4559",
         tp2="4551",
         tp3="4533",
@@ -111,3 +191,15 @@ def _parsed_signal() -> ParsedSignalData:
         signal_time="2026-03-22T19:28:00+09:00",
         signal_time_utc="2026-03-22T10:28:00Z",
     )
+
+
+def _valid_raw_text() -> str:
+    return """SELL XAUUSD 1m
+
+Entry | 4563 - 4568
+
+TP | 4559 - 4551 - 4533
+SL | 4571
+
+2026-03-22-19:28
+"""
