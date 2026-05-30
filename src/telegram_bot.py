@@ -63,6 +63,7 @@ async def _copy_to_log_channel(
     config: AppConfig, context: ContextTypes.DEFAULT_TYPE, message: Message, raw_message_id: int
 ) -> None:
     if config.telegram_log_chat_id is None:
+        logger.info("copyMessageスキップ raw_message_id=%s reason=TELEGRAM_LOG_CHAT_ID未設定", raw_message_id)
         return
     try:
         await context.bot.copy_message(

@@ -28,7 +28,8 @@ class ConfigError(Exception):
 def load_config(require_bot_token: bool) -> AppConfig:
     """`.env` と環境変数からアプリ設定を読み込む。"""
 
-    load_dotenv()
+    # Mac常駐運用では `.env` を正本にするため、起動元シェルの空環境変数より優先する。
+    load_dotenv(override=True)
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if require_bot_token and not token:
         raise ConfigError("TELEGRAM_BOT_TOKEN が設定されていません")

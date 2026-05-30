@@ -37,9 +37,11 @@
 | ファイル | 用途 | 実行コマンド | 種別 | 削除条件 |
 |---|---|---|---|---|
 | `scripts/init_db.py` | SQLite DB の初期化 | `python -m scripts.init_db` | `maintenance/` | アプリが SQLite を使わなくなったとき |
-| `scripts/reset_db.py` | ローカルSQLite DBをバックアップして再初期化 | `python -m scripts.reset_db` | `maintenance/` | SQLite スキーマ変更運用を廃止したとき |
+| `scripts/reset_db.py` | ローカルSQLite DBとCSVの削除 | `python -m scripts.reset_db` | `maintenance/` | SQLite スキーマ変更運用を廃止したとき |
 | `scripts/export_csv.py` | SQLite から CSV を全再生成 | `python -m scripts.export_csv` | `maintenance/` | CSV 出力機能を廃止したとき |
 | `scripts/print_chat_id.py` | Telegram の chat_id 確認 | `python -m scripts.print_chat_id` | `dev/` | Telegram 連携を廃止したとき |
+| `scripts/check_log_channel.py` | ログチャンネルの参照と投稿権限確認 | `python -m scripts.check_log_channel` | `dev/` | Telegram ログチャンネル連携を廃止したとき |
+| `scripts/process_sample_message.py` | Telegramなしでサンプル本文をDB/CSV処理 | `python -m scripts.process_sample_message` | `dev/` | Telegramなしの手動投入検証が不要になったとき |
 | `scripts/setup_mac.sh` | macOS ローカル初回セットアップ | `./scripts/setup_mac.sh` | `dev/` | macOS ローカル運用を廃止したとき |
 | `scripts/install_launch_agent.sh` | macOS LaunchAgent の生成と登録 | `./scripts/install_launch_agent.sh` | `maintenance/` | launchd 運用を廃止したとき |
 

@@ -19,6 +19,7 @@ def main() -> None:
     config = load_config(require_bot_token=True)
     setup_logging(config.log_dir)
     logger.info("アプリ起動")
+    logger.info("Telegramログチャンネル設定 enabled=%s", config.telegram_log_chat_id is not None)
     init_db(config.sqlite_db_path)
     logger.info("DB初期化 path=%s", config.sqlite_db_path)
 

@@ -62,6 +62,7 @@ LOG_DIR=./logs
 ```
 
 `TELEGRAM_LOG_CHAT_ID` が空の場合、`copyMessage` はスキップされます。
+`.env` を変更した後は、起動中のBotを一度止めて `python -m src.main` を起動し直してください。起動中プロセスは `.env` の変更を自動では再読み込みしません。
 
 ## ログチャンネルID
 
@@ -75,6 +76,36 @@ python -m scripts.print_chat_id
 ```
 
 TelegramでBotまたはログチャンネルに `test` と送ると、ターミナルに `chat_id` が表示されます。その値を `.env` の `TELEGRAM_LOG_CHAT_ID` に設定します。ログチャンネルで確認する場合は、先にBotをチャンネルへ追加してください。
+
+## ログチャンネル疎通確認
+
+`.env` に `TELEGRAM_BOT_TOKEN` と `TELEGRAM_LOG_CHAT_ID` を設定した後、ログチャンネルが見つかるか、Botが投稿できるかを確認します。Bot Token は表示されません。
+
+実行場所: プロジェクトルート
+
+```bash
+source .venv/bin/activate
+python -m scripts.check_log_channel
+```
+
+成功すると `chat.id`, `chat.type`, `chat.title` が表示され、ログチャンネルに `log channel test` が投稿されます。
+
+チャンネルへBotを追加する基本手順:
+
+1. Telegramで対象チャンネルを開く
+2. チャンネル設定から管理者を追加する
+3. 作成したBotを管理者として追加する
+4. 投稿権限を有効にする
+5. `python -m scripts.check_log_channel` で疎通確認する
+
+`Chat not found` の主な原因:
+
+- `TELEGRAM_LOG_CHAT_ID` が間違っている
+- チャンネルIDの `-100` が抜けている
+- Botがログチャンネルまたはグループに追加されていない
+- Botに投稿権限がない
+
+本体保存テストだけ先に行う場合は `.env` の `TELEGRAM_LOG_CHAT_ID=` を空にすると `copyMessage` を一時停止できます。
 
 ## DB初期化
 
@@ -135,6 +166,49 @@ Entry | 4563 - 4568 - 4570 - 4575 - 4580
 - `entry_min` は最小値、`entry_max` は最大値
 - `entry_raw` は `Entry |` より後ろの文字列を trim した値
 - `entry1`〜`entry5` は元の順番で保存し、存在しない値はNULLまたはCSV空欄
+
+## 6点Entry rejected確認
+
+Bot起動中に以下を送ると、6点Entryとして rejected になる想定です。
+
+```txt
+SELL XAUUSD 1m
+
+Entry | 4563 - 4568 - 4570 - 4575 - 4580 - 4590
+
+TP | 4559 - 4551 - 4533
+SL | 4571
+
+2026-03-22-19:28
+```
+
+確認コマンド:
+
+```bash
+cat output/rejected_signals.csv
+sqlite3 data/signals.sqlite3 "select reason from rejected_messages order by id desc limit 1;"
+```
+
+`rejected_signals.csv` が無い場合は、まずTelegramから本文が届いたかを確認します。
+
+```bash
+sqlite3 data/signals.sqlite3 "select id, telegram_message_id, raw_text from raw_messages order by id desc limit 3;"
+```
+
+Telegramに依存せずDB/CSVまで通しで確認する場合は、標準入力から手動投入できます。
+
+```bash
+python -m scripts.process_sample_message --message-id manual-six-entry <<'EOF'
+SELL XAUUSD 1m
+
+Entry | 4563 - 4568 - 4570 - 4575 - 4580 - 4590
+
+TP | 4559 - 4551 - 4533
+SL | 4571
+
+2026-03-22-19:28
+EOF
+```
 
 ## 手動起動
 
@@ -320,4 +394,5 @@ scripts/reset_db.py      # ローカルDBリセット
 scripts/export_csv.py    # CSV 全再生成
 scripts/setup_mac.sh     # macOS 初回セットアップ
 scripts/print_chat_id.py # chat_id 確認
+scripts/check_log_channel.py # ログチャンネル疎通確認
 ```

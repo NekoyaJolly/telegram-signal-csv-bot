@@ -17,6 +17,7 @@ from src.database import (
 )
 from src.main import regenerate_csv_after_reprocess
 from src.models import ParsedSignalData, RawMessageInput
+from scripts.process_sample_message import process_manual_message
 
 
 EXPECTED_TRADE_COLUMNS = [
@@ -141,6 +142,35 @@ def test_csv_is_regenerated_after_startup_reprocess(tmp_path: Path) -> None:
     assert rejected_rows[0]["signal_id"] == "123_457"
 
 
+def test_process_sample_message_rejects_six_entry_points(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.sqlite3"
+    init_db(db_path)
+    config = AppConfig(
+        telegram_bot_token="",
+        telegram_log_chat_id=None,
+        signal_timezone=ZoneInfo("Asia/Tokyo"),
+        sqlite_db_path=db_path,
+        csv_output_path=tmp_path / "trade_signals.csv",
+        rejected_csv_output_path=tmp_path / "rejected_signals.csv",
+        log_dir=tmp_path / "logs",
+    )
+
+    result = process_manual_message(
+        config=config,
+        raw_text=_six_entry_raw_text(),
+        telegram_message_id="manual-six-entry",
+    )
+    connection = connect(db_path)
+    parsed_count = connection.execute("SELECT COUNT(*) AS count FROM parsed_signals").fetchone()["count"]
+    rejected_row = connection.execute("SELECT reason FROM rejected_messages").fetchone()
+    rejected_rows = _read_csv(config.rejected_csv_output_path)
+
+    assert result.status == "rejected"
+    assert parsed_count == 0
+    assert rejected_row["reason"] == "Entry は最大5点までです"
+    assert rejected_rows[0]["signal_id"] == "manual_manual-six-entry"
+
+
 def _seed_parsed_signal(tmp_path: Path) -> sqlite3.Connection:
     db_path = tmp_path / "signals.sqlite3"
     init_db(db_path)
@@ -197,6 +227,18 @@ def _valid_raw_text() -> str:
     return """SELL XAUUSD 1m
 
 Entry | 4563 - 4568
+
+TP | 4559 - 4551 - 4533
+SL | 4571
+
+2026-03-22-19:28
+"""
+
+
+def _six_entry_raw_text() -> str:
+    return """SELL XAUUSD 1m
+
+Entry | 4563 - 4568 - 4570 - 4575 - 4580 - 4590
 
 TP | 4559 - 4551 - 4533
 SL | 4571
