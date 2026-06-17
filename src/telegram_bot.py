@@ -17,8 +17,8 @@ from src.database import (
     update_copy_error,
     update_copy_success,
 )
-from src.models import RawMessageInput
-from src.parser import SignalParseError, parse_signal
+from src.models import RawMessageInput, SignalBlockResult
+from src.parser import parse_signal_blocks
 
 
 logger = logging.getLogger(__name__)
@@ -86,26 +86,56 @@ async def _parse_store_and_export(
     raw_message_id: int,
     raw_text: str,
 ) -> None:
-    try:
-        signal = parse_signal(raw_text, config.signal_timezone)
-        save_parsed_signal(connection, raw_message_id, signal)
-        logger.info("パース成功 raw_message_id=%s", raw_message_id)
+    # 1メッセージに複数シグナルが連結されることがあるため、ブロック単位で成功/失敗を切り分けて保存する
+    results = parse_signal_blocks(raw_text, config.signal_timezone)
+    parsed_results = [result for result in results if result.signal is not None]
+    rejected_results = [result for result in results if result.signal is None]
+
+    for result in results:
+        if result.signal is not None:
+            save_parsed_signal(connection, raw_message_id, result.block_index, result.signal)
+        elif result.error is not None:
+            save_rejected_message(connection, raw_message_id, result.block_index, result.error)
+    logger.info(
+        "パース完了 raw_message_id=%s parsed=%s rejected=%s",
+        raw_message_id,
+        len(parsed_results),
+        len(rejected_results),
+    )
+
+    if parsed_results:
         try:
             append_parsed_signal_row(connection, config.csv_output_path, raw_message_id)
             logger.info("CSV出力成功 raw_message_id=%s path=%s", raw_message_id, config.csv_output_path)
         except Exception:
             logger.exception("CSV出力失敗 raw_message_id=%s", raw_message_id)
-        await message.reply_text("シグナルを保存しました。")
-    except SignalParseError as error:
-        reason = str(error)
-        save_rejected_message(connection, raw_message_id, reason)
-        logger.info("パース失敗 raw_message_id=%s reason=%s", raw_message_id, reason)
+    if rejected_results:
         try:
             append_rejected_signal_row(connection, config.rejected_csv_output_path, raw_message_id)
             logger.info("rejected CSV出力成功 raw_message_id=%s", raw_message_id)
         except Exception:
             logger.exception("rejected CSV出力失敗 raw_message_id=%s", raw_message_id)
-        await message.reply_text(f"シグナルを rejected として保存しました: {reason}")
+
+    await message.reply_text(_build_reply_text(parsed_results, rejected_results))
+
+
+def _build_reply_text(
+    parsed_results: list[SignalBlockResult], rejected_results: list[SignalBlockResult]
+) -> str:
+    """成功/失敗ブロック数に応じて、利用者向けの返信文面を組み立てる。"""
+
+    parsed_count = len(parsed_results)
+    rejected_count = len(rejected_results)
+    if parsed_count and not rejected_count:
+        if parsed_count == 1:
+            return "シグナルを保存しました。"
+        return f"シグナルを{parsed_count}件保存しました。"
+    if rejected_count and not parsed_count:
+        if rejected_count == 1:
+            return f"シグナルを rejected として保存しました: {rejected_results[0].error}"
+        return f"{rejected_count}件すべてを rejected として保存しました。"
+    reasons = "; ".join(sorted({result.error for result in rejected_results if result.error}))
+    return f"シグナルを{parsed_count}件保存し、{rejected_count}件を rejected として保存しました: {reasons}"
 
 
 def _build_raw_message_input(update: Update, message: Message) -> RawMessageInput:

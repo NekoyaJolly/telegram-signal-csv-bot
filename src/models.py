@@ -50,6 +50,20 @@ class ParsedSignalData:
 
 
 @dataclass(frozen=True)
+class SignalBlockResult:
+    """1メッセージを定型ブロック単位に分割した際の、1ブロック分のパース結果。
+
+    1メッセージに複数シグナルが連結されて届くことがあるため、メッセージ内の出現順を
+    block_index (1始まり) で保持する。パース成功時は signal、失敗時は error のみに値が入る
+    (両方が同時に値を持つことはない)。
+    """
+
+    block_index: int
+    signal: ParsedSignalData | None
+    error: str | None
+
+
+@dataclass(frozen=True)
 class RawMessageRecord:
     """未処理 raw message の再処理に使う読み取りモデル。"""
 
