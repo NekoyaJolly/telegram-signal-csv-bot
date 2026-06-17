@@ -215,7 +215,7 @@ def test_parse_signal_blocks_returns_each_signal_in_order() -> None:
 
 
 def test_parse_signal_blocks_separates_failed_block() -> None:
-    # 2ブロック目の SL 行を欠落させ、ブロック単位で成功/失敗が切り分くことを確認する
+    # 2ブロック目の SL 行を欠落させ、ブロック単位で成功/失敗が切り分けられることを確認する
     raw_text = (
         "SELL XAUUSD 5m\n\nEntry | 4505 - 4510\n\nTP | 4500 - 4495 - 4485\nSL | 4515\n\n2026-06-02-23:00\n"
         "BUY XAUUSD 5m\n\nEntry | 4461 - 4456\n\nTP | 4466 - 4471 - 4481\n\n2026-06-03-14:25"
