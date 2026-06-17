@@ -3,10 +3,18 @@ from __future__ import annotations
 import pytest
 from zoneinfo import ZoneInfo
 
-from src.parser import SignalParseError, parse_signal
+from src.parser import SignalParseError, parse_signal, parse_signal_blocks, split_signal_blocks
 
 
 TOKYO = ZoneInfo("Asia/Tokyo")
+
+
+# 実際に届く「複数シグナル連結」入力 (時刻行の直後に空行なしで次の B/S ヘッダーが続く)
+MULTI_SIGNAL_RAW_TEXT = (
+    "SELL XAUUSD 5m\n\nEntry | 4505 - 4510\n\nTP | 4500 - 4495 - 4485\nSL | 4515\n\n2026-06-02-23:00\n"
+    "BUY XAUUSD 5m\n\nEntry | 4461 - 4456\n\nTP | 4466 - 4471 - 4481\nSL | 4451\n\n2026-06-03-14:25\n"
+    "SELL XAUUSD 5m\n\nEntry | 4466 - 4471\n\nTP | 4461 - 4456 - 4446\nSL | 4476\n\n2026-06-03-14:45"
+)
 
 
 def test_sell_xauusd_signal_is_parsed() -> None:
@@ -175,6 +183,57 @@ def test_signal_time_utc_is_converted() -> None:
 
     assert signal.signal_time == "2026-03-22T19:28:00+09:00"
     assert signal.signal_time_utc == "2026-03-22T10:28:00Z"
+
+
+def test_single_message_is_one_block() -> None:
+    blocks = split_signal_blocks(_message("SELL XAUUSD 1m"))
+
+    assert len(blocks) == 1
+
+
+def test_multiple_signals_are_split_into_blocks() -> None:
+    blocks = split_signal_blocks(MULTI_SIGNAL_RAW_TEXT)
+
+    assert len(blocks) == 3
+    assert blocks[0].startswith("SELL XAUUSD 5m")
+    assert blocks[1].startswith("BUY XAUUSD 5m")
+    assert blocks[2].startswith("SELL XAUUSD 5m")
+
+
+def test_parse_signal_blocks_returns_each_signal_in_order() -> None:
+    results = parse_signal_blocks(MULTI_SIGNAL_RAW_TEXT, TOKYO)
+
+    assert [result.block_index for result in results] == [1, 2, 3]
+    assert all(result.signal is not None and result.error is None for result in results)
+    signals = [result.signal for result in results]
+    assert [signal.side for signal in signals if signal is not None] == ["SELL", "BUY", "SELL"]
+    assert [signal.signal_time for signal in signals if signal is not None] == [
+        "2026-06-02T23:00:00+09:00",
+        "2026-06-03T14:25:00+09:00",
+        "2026-06-03T14:45:00+09:00",
+    ]
+
+
+def test_parse_signal_blocks_separates_failed_block() -> None:
+    # 2ブロック目の SL 行を欠落させ、ブロック単位で成功/失敗が切り分けられることを確認する
+    raw_text = (
+        "SELL XAUUSD 5m\n\nEntry | 4505 - 4510\n\nTP | 4500 - 4495 - 4485\nSL | 4515\n\n2026-06-02-23:00\n"
+        "BUY XAUUSD 5m\n\nEntry | 4461 - 4456\n\nTP | 4466 - 4471 - 4481\n\n2026-06-03-14:25"
+    )
+
+    results = parse_signal_blocks(raw_text, TOKYO)
+
+    assert len(results) == 2
+    assert results[0].signal is not None and results[0].error is None
+    assert results[1].signal is None and results[1].error == "SL 行がありません"
+
+
+def test_parse_signal_blocks_wraps_single_invalid_message_as_one_rejected_block() -> None:
+    results = parse_signal_blocks("SELL XAUUSD 1m", TOKYO)
+
+    assert len(results) == 1
+    assert results[0].signal is None
+    assert results[0].error is not None
 
 
 def _message(

@@ -6,12 +6,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from src.models import ParsedSignalData, RawMessageInput, RawMessageRecord, RawMessageSaveResult
-from src.parser import SignalParseError, parse_signal
+from src.parser import parse_signal_blocks
 
 
 REQUIRED_PARSED_SIGNAL_COLUMNS = {
     "id",
     "raw_message_id",
+    "block_index",
     "side",
     "symbol",
     "timeframe",
@@ -32,6 +33,14 @@ REQUIRED_PARSED_SIGNAL_COLUMNS = {
     "sl",
     "signal_time",
     "signal_time_utc",
+    "created_at",
+}
+
+REQUIRED_REJECTED_MESSAGE_COLUMNS = {
+    "id",
+    "raw_message_id",
+    "block_index",
+    "reason",
     "created_at",
 }
 
@@ -58,6 +67,7 @@ CREATE TABLE IF NOT EXISTS raw_messages (
 CREATE TABLE IF NOT EXISTS parsed_signals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   raw_message_id INTEGER NOT NULL,
+  block_index INTEGER NOT NULL,
   side TEXT NOT NULL,
   symbol TEXT NOT NULL,
   timeframe TEXT NOT NULL,
@@ -80,16 +90,17 @@ CREATE TABLE IF NOT EXISTS parsed_signals (
   signal_time_utc TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY (raw_message_id) REFERENCES raw_messages(id),
-  UNIQUE (raw_message_id)
+  UNIQUE (raw_message_id, block_index)
 );
 
 CREATE TABLE IF NOT EXISTS rejected_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   raw_message_id INTEGER NOT NULL,
+  block_index INTEGER NOT NULL,
   reason TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY (raw_message_id) REFERENCES raw_messages(id),
-  UNIQUE (raw_message_id)
+  UNIQUE (raw_message_id, block_index)
 );
 
 CREATE TABLE IF NOT EXISTS export_logs (
@@ -126,18 +137,23 @@ def init_db(db_path: Path) -> None:
 def validate_schema(connection: sqlite3.Connection, db_path: Path) -> None:
     """古いSQLiteスキーマを早期検出し、復旧手順が分かるエラーにする。"""
 
-    rows = connection.execute("PRAGMA table_info(parsed_signals)").fetchall()
-    existing_columns = {str(row["name"]) for row in rows}
-    missing_columns = sorted(REQUIRED_PARSED_SIGNAL_COLUMNS - existing_columns)
-    if missing_columns:
-        missing_text = ", ".join(missing_columns)
-        raise DatabaseSchemaError(
-            "SQLite DB の parsed_signals テーブルが古いスキーマです。"
-            f"不足カラム: {missing_text}。"
-            f"対象DB: {db_path}。"
-            "初期開発段階のため、必要なデータを退避したうえで "
-            "`python -m scripts.reset_db` と `python -m scripts.init_db` を実行してください。"
-        )
+    # parsed_signals を先に検査する。複数シグナル対応で block_index を追加したため、旧DBはここで検出される
+    for table, required_columns in (
+        ("parsed_signals", REQUIRED_PARSED_SIGNAL_COLUMNS),
+        ("rejected_messages", REQUIRED_REJECTED_MESSAGE_COLUMNS),
+    ):
+        rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
+        existing_columns = {str(row["name"]) for row in rows}
+        missing_columns = sorted(required_columns - existing_columns)
+        if missing_columns:
+            missing_text = ", ".join(missing_columns)
+            raise DatabaseSchemaError(
+                f"SQLite DB の {table} テーブルが古いスキーマです。"
+                f"不足カラム: {missing_text}。"
+                f"対象DB: {db_path}。"
+                "初期開発段階のため、必要なデータを退避したうえで "
+                "`python -m scripts.reset_db` と `python -m scripts.init_db` を実行してください。"
+            )
 
 
 def utc_now_iso() -> str:
@@ -209,21 +225,22 @@ def update_copy_error(connection: sqlite3.Connection, raw_message_id: int, copy_
 
 
 def save_parsed_signal(
-    connection: sqlite3.Connection, raw_message_id: int, signal: ParsedSignalData
+    connection: sqlite3.Connection, raw_message_id: int, block_index: int, signal: ParsedSignalData
 ) -> int:
-    """parsed_signals へ正規化済みシグナルを保存する。"""
+    """parsed_signals へ正規化済みシグナルを保存する (メッセージ内の block_index 単位)。"""
 
     created_at = utc_now_iso()
     connection.execute(
         """
         INSERT OR IGNORE INTO parsed_signals (
-          raw_message_id, side, symbol, timeframe, entry_type, entry_min, entry_max, entry_raw,
+          raw_message_id, block_index, side, symbol, timeframe, entry_type, entry_min, entry_max, entry_raw,
           entry1, entry2, entry3, entry4, entry5,
           tp1, tp2, tp3, tp4, tp5, sl, signal_time, signal_time_utc, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             raw_message_id,
+            block_index,
             signal.side,
             signal.symbol,
             signal.timeframe,
@@ -248,7 +265,8 @@ def save_parsed_signal(
         ),
     )
     row = connection.execute(
-        "SELECT id FROM parsed_signals WHERE raw_message_id = ?", (raw_message_id,)
+        "SELECT id FROM parsed_signals WHERE raw_message_id = ? AND block_index = ?",
+        (raw_message_id, block_index),
     ).fetchone()
     if row is None:
         raise RuntimeError("parsed_signals の保存結果を取得できませんでした")
@@ -256,19 +274,22 @@ def save_parsed_signal(
     return int(row["id"])
 
 
-def save_rejected_message(connection: sqlite3.Connection, raw_message_id: int, reason: str) -> int:
-    """rejected_messages へパース失敗理由を保存する。"""
+def save_rejected_message(
+    connection: sqlite3.Connection, raw_message_id: int, block_index: int, reason: str
+) -> int:
+    """rejected_messages へパース失敗理由を保存する (メッセージ内の block_index 単位)。"""
 
     created_at = utc_now_iso()
     connection.execute(
         """
-        INSERT OR IGNORE INTO rejected_messages (raw_message_id, reason, created_at)
-        VALUES (?, ?, ?)
+        INSERT OR IGNORE INTO rejected_messages (raw_message_id, block_index, reason, created_at)
+        VALUES (?, ?, ?, ?)
         """,
-        (raw_message_id, reason, created_at),
+        (raw_message_id, block_index, reason, created_at),
     )
     row = connection.execute(
-        "SELECT id FROM rejected_messages WHERE raw_message_id = ?", (raw_message_id,)
+        "SELECT id FROM rejected_messages WHERE raw_message_id = ? AND block_index = ?",
+        (raw_message_id, block_index),
     ).fetchone()
     if row is None:
         raise RuntimeError("rejected_messages の保存結果を取得できませんでした")
@@ -318,18 +339,18 @@ def fetch_unprocessed_raw_messages(connection: sqlite3.Connection) -> list[RawMe
 
 
 def reprocess_unprocessed_messages(connection: sqlite3.Connection, signal_timezone: ZoneInfo) -> tuple[int, int]:
-    """raw のみ残ったメッセージを再パースし、成功数と失敗数を返す。"""
+    """raw のみ残ったメッセージを再パースし、成功ブロック数と失敗ブロック数を返す。"""
 
     parsed_count = 0
     rejected_count = 0
     for raw_message in fetch_unprocessed_raw_messages(connection):
-        try:
-            signal = parse_signal(raw_message.raw_text, signal_timezone)
-            save_parsed_signal(connection, raw_message.id, signal)
-            parsed_count += 1
-        except SignalParseError as error:
-            save_rejected_message(connection, raw_message.id, str(error))
-            rejected_count += 1
+        for result in parse_signal_blocks(raw_message.raw_text, signal_timezone):
+            if result.signal is not None:
+                save_parsed_signal(connection, raw_message.id, result.block_index, result.signal)
+                parsed_count += 1
+            elif result.error is not None:
+                save_rejected_message(connection, raw_message.id, result.block_index, result.error)
+                rejected_count += 1
     return parsed_count, rejected_count
 
 
@@ -340,6 +361,8 @@ def fetch_parsed_signal_export_rows(connection: sqlite3.Connection) -> list[sqli
         """
         SELECT
           parsed.id AS parsed_id,
+          parsed.raw_message_id AS raw_message_id,
+          parsed.block_index AS block_index,
           raw.source,
           raw.telegram_chat_id,
           raw.telegram_message_id,
@@ -378,6 +401,8 @@ def fetch_rejected_export_rows(connection: sqlite3.Connection) -> list[sqlite3.R
     return connection.execute(
         """
         SELECT
+          rejected.raw_message_id AS raw_message_id,
+          rejected.block_index AS block_index,
           raw.source,
           raw.telegram_chat_id,
           raw.telegram_message_id,

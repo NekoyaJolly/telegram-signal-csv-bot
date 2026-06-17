@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
 from src.database import (
@@ -52,12 +53,16 @@ REJECTED_SIGNAL_COLUMNS = [
 
 
 def append_parsed_signal_row(connection: sqlite3.Connection, output_path: Path, raw_message_id: int) -> None:
-    """受信ごとに parsed_signals の1行を CSV へ追記する。"""
+    """受信ごとに、その raw message に属する parsed_signals 全行を CSV へ追記する。
 
-    row = connection.execute(
+    1 メッセージに複数シグナルが含まれる場合、ブロック順に複数行を追記する。
+    """
+
+    rows = connection.execute(
         """
         SELECT
           parsed.id AS parsed_id,
+          parsed.block_index AS block_index,
           raw.source,
           raw.telegram_chat_id,
           raw.telegram_message_id,
@@ -86,20 +91,25 @@ def append_parsed_signal_row(connection: sqlite3.Connection, output_path: Path, 
         FROM parsed_signals AS parsed
         JOIN raw_messages AS raw ON raw.id = parsed.raw_message_id
         WHERE raw.id = ?
+        ORDER BY parsed.block_index
         """,
         (raw_message_id,),
-    ).fetchone()
-    if row is None:
+    ).fetchall()
+    if not rows:
         raise RuntimeError("CSV 追記対象の parsed_signals が見つかりません")
-    _append_row(output_path, TRADE_SIGNAL_COLUMNS, _trade_row_to_dict(row))
+    # block_count は同一メッセージ内の保存済みシグナル数。複数のときだけ signal_id に block_index を付与する
+    block_count = len(rows)
+    for row in rows:
+        _append_row(output_path, TRADE_SIGNAL_COLUMNS, _trade_row_to_dict(row, block_count))
 
 
 def append_rejected_signal_row(connection: sqlite3.Connection, output_path: Path, raw_message_id: int) -> None:
-    """受信ごとに rejected_messages の1行を CSV へ追記する。"""
+    """受信ごとに、その raw message に属する rejected_messages 全行を CSV へ追記する。"""
 
-    row = connection.execute(
+    rows = connection.execute(
         """
         SELECT
+          rejected.block_index AS block_index,
           raw.source,
           raw.telegram_chat_id,
           raw.telegram_message_id,
@@ -109,18 +119,23 @@ def append_rejected_signal_row(connection: sqlite3.Connection, output_path: Path
         FROM rejected_messages AS rejected
         JOIN raw_messages AS raw ON raw.id = rejected.raw_message_id
         WHERE raw.id = ?
+        ORDER BY rejected.block_index
         """,
         (raw_message_id,),
-    ).fetchone()
-    if row is None:
+    ).fetchall()
+    if not rows:
         raise RuntimeError("CSV 追記対象の rejected_messages が見つかりません")
-    _append_row(output_path, REJECTED_SIGNAL_COLUMNS, _rejected_row_to_dict(row))
+    block_count = len(rows)
+    for row in rows:
+        _append_row(output_path, REJECTED_SIGNAL_COLUMNS, _rejected_row_to_dict(row, block_count))
 
 
 def regenerate_trade_signals_csv(connection: sqlite3.Connection, output_path: Path) -> int:
     """SQLite の parsed_signals から trade_signals.csv を全再生成する。"""
 
-    rows = [_trade_row_to_dict(row) for row in fetch_parsed_signal_export_rows(connection)]
+    fetched = fetch_parsed_signal_export_rows(connection)
+    block_counts = Counter(row["raw_message_id"] for row in fetched)
+    rows = [_trade_row_to_dict(row, block_counts[row["raw_message_id"]]) for row in fetched]
     _write_rows(output_path, TRADE_SIGNAL_COLUMNS, rows)
     record_export_log(connection, "trade_signals", output_path, len(rows))
     return len(rows)
@@ -129,7 +144,9 @@ def regenerate_trade_signals_csv(connection: sqlite3.Connection, output_path: Pa
 def regenerate_rejected_signals_csv(connection: sqlite3.Connection, output_path: Path) -> int:
     """SQLite の rejected_messages から rejected_signals.csv を全再生成する。"""
 
-    rows = [_rejected_row_to_dict(row) for row in fetch_rejected_export_rows(connection)]
+    fetched = fetch_rejected_export_rows(connection)
+    block_counts = Counter(row["raw_message_id"] for row in fetched)
+    rows = [_rejected_row_to_dict(row, block_counts[row["raw_message_id"]]) for row in fetched]
     _write_rows(output_path, REJECTED_SIGNAL_COLUMNS, rows)
     record_export_log(connection, "rejected_signals", output_path, len(rows))
     return len(rows)
@@ -153,11 +170,24 @@ def _write_rows(output_path: Path, columns: list[str], rows: list[dict[str, str]
         writer.writerows(rows)
 
 
-def _trade_row_to_dict(row: sqlite3.Row) -> dict[str, str]:
+def _build_signal_id(chat_id: str, message_id: str, block_index: object, block_count: int) -> str:
+    """CSV 用の signal_id を組み立てる。
+
+    1 メッセージ 1 シグナルなら従来どおり `{chat}_{message}`。複数シグナルが含まれる場合のみ
+    末尾に block_index (1始まり) を付与して `{chat}_{message}_{n}` とし、行の一意性を保つ。
+    """
+
+    base = f"{chat_id}_{message_id}"
+    if block_count <= 1:
+        return base
+    return f"{base}_{_cell_to_text(block_index)}"
+
+
+def _trade_row_to_dict(row: sqlite3.Row, block_count: int) -> dict[str, str]:
     chat_id = _cell_to_text(row["telegram_chat_id"])
     message_id = _cell_to_text(row["telegram_message_id"])
     return {
-        "signal_id": f"{chat_id}_{message_id}",
+        "signal_id": _build_signal_id(chat_id, message_id, row["block_index"], block_count),
         "source": _cell_to_text(row["source"]),
         "telegram_chat_id": chat_id,
         "telegram_message_id": message_id,
@@ -186,11 +216,11 @@ def _trade_row_to_dict(row: sqlite3.Row) -> dict[str, str]:
     }
 
 
-def _rejected_row_to_dict(row: sqlite3.Row) -> dict[str, str]:
+def _rejected_row_to_dict(row: sqlite3.Row, block_count: int) -> dict[str, str]:
     chat_id = _cell_to_text(row["telegram_chat_id"])
     message_id = _cell_to_text(row["telegram_message_id"])
     return {
-        "signal_id": f"{chat_id}_{message_id}",
+        "signal_id": _build_signal_id(chat_id, message_id, row["block_index"], block_count),
         "source": _cell_to_text(row["source"]),
         "telegram_chat_id": chat_id,
         "telegram_message_id": message_id,

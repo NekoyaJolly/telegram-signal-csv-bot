@@ -68,7 +68,7 @@ def test_rejected_signals_csv_can_be_generated(tmp_path: Path) -> None:
     init_db(db_path)
     connection = connect(db_path)
     raw_id = save_raw_message(connection, _raw_message()).raw_message_id
-    save_rejected_message(connection, raw_id, "Entry 行がありません")
+    save_rejected_message(connection, raw_id, 1, "Entry 行がありません")
     output_path = tmp_path / "rejected_signals.csv"
 
     count = regenerate_rejected_signals_csv(connection, output_path)
@@ -171,12 +171,74 @@ def test_process_sample_message_rejects_six_entry_points(tmp_path: Path) -> None
     assert rejected_rows[0]["signal_id"] == "manual_manual-six-entry"
 
 
+def test_multiple_signals_in_one_message_are_split_and_suffixed(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.sqlite3"
+    init_db(db_path)
+    config = AppConfig(
+        telegram_bot_token="",
+        telegram_log_chat_id=None,
+        signal_timezone=ZoneInfo("Asia/Tokyo"),
+        sqlite_db_path=db_path,
+        csv_output_path=tmp_path / "trade_signals.csv",
+        rejected_csv_output_path=tmp_path / "rejected_signals.csv",
+        log_dir=tmp_path / "logs",
+    )
+
+    result = process_manual_message(
+        config=config,
+        raw_text=_two_signal_raw_text(),
+        telegram_message_id="manual-multi",
+    )
+    connection = connect(db_path)
+    parsed_count = connection.execute("SELECT COUNT(*) AS count FROM parsed_signals").fetchone()["count"]
+    trade_rows = _read_csv(config.csv_output_path)
+
+    assert result.status == "parsed"
+    assert parsed_count == 2
+    # 複数シグナルなので signal_id にブロック番号 (1始まり) を付与し、行を一意にする
+    assert [row["signal_id"] for row in trade_rows] == ["manual_manual-multi_1", "manual_manual-multi_2"]
+    assert [row["side"] for row in trade_rows] == ["SELL", "BUY"]
+    assert [row["signal_time"] for row in trade_rows] == [
+        "2026-06-02T23:00:00+09:00",
+        "2026-06-03T14:25:00+09:00",
+    ]
+
+
+def test_partial_message_saves_parsed_and_rejected_blocks(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.sqlite3"
+    init_db(db_path)
+    config = AppConfig(
+        telegram_bot_token="",
+        telegram_log_chat_id=None,
+        signal_timezone=ZoneInfo("Asia/Tokyo"),
+        sqlite_db_path=db_path,
+        csv_output_path=tmp_path / "trade_signals.csv",
+        rejected_csv_output_path=tmp_path / "rejected_signals.csv",
+        log_dir=tmp_path / "logs",
+    )
+
+    result = process_manual_message(
+        config=config,
+        raw_text=_one_valid_one_invalid_raw_text(),
+        telegram_message_id="manual-partial",
+    )
+    trade_rows = _read_csv(config.csv_output_path)
+    rejected_rows = _read_csv(config.rejected_csv_output_path)
+
+    assert result.status == "partial"
+    # 成功ブロックは parsed、失敗ブロックは rejected に切り分けて保存される
+    assert [row["side"] for row in trade_rows] == ["SELL"]
+    assert trade_rows[0]["signal_id"] == "manual_manual-partial"
+    assert len(rejected_rows) == 1
+    assert rejected_rows[0]["reason"] == "SL 行がありません"
+
+
 def _seed_parsed_signal(tmp_path: Path) -> sqlite3.Connection:
     db_path = tmp_path / "signals.sqlite3"
     init_db(db_path)
     connection = connect(db_path)
     raw_id = save_raw_message(connection, _raw_message()).raw_message_id
-    save_parsed_signal(connection, raw_id, _parsed_signal())
+    save_parsed_signal(connection, raw_id, 1, _parsed_signal())
     return connection
 
 
@@ -245,3 +307,19 @@ SL | 4571
 
 2026-03-22-19:28
 """
+
+
+def _two_signal_raw_text() -> str:
+    # 実入力どおり、時刻行の直後に空行なしで次の B/S ヘッダーが続く連結形式
+    return (
+        "SELL XAUUSD 5m\n\nEntry | 4505 - 4510\n\nTP | 4500 - 4495 - 4485\nSL | 4515\n\n2026-06-02-23:00\n"
+        "BUY XAUUSD 5m\n\nEntry | 4461 - 4456\n\nTP | 4466 - 4471 - 4481\nSL | 4451\n\n2026-06-03-14:25"
+    )
+
+
+def _one_valid_one_invalid_raw_text() -> str:
+    # 2ブロック目は SL 行が欠落しており、ブロック単位で rejected になる
+    return (
+        "SELL XAUUSD 5m\n\nEntry | 4505 - 4510\n\nTP | 4500 - 4495 - 4485\nSL | 4515\n\n2026-06-02-23:00\n"
+        "BUY XAUUSD 5m\n\nEntry | 4461 - 4456\n\nTP | 4466 - 4471 - 4481\n\n2026-06-03-14:25"
+    )

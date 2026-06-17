@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
-from src.models import ParsedSignalData
+from src.models import ParsedSignalData, SignalBlockResult
 
 
 class SignalParseError(Exception):
@@ -17,8 +17,43 @@ PRICE_PATTERN = re.compile(r"^\d+(?:\.\d+)?$")
 DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}:\d{2}$")
 
 
+def split_signal_blocks(raw_text: str) -> list[str]:
+    """複数シグナルが連結された本文を、B/S ヘッダー行を境界に 1 シグナルずつへ分割する。
+
+    定型は「B/S ヘッダー 〜 時刻行」で 1 シグナル。複数届く場合は時刻行の直後に空行なしで次の
+    B/S ヘッダーが続くため、ヘッダー行の出現位置をブロック境界とする (= 時刻行の次に B/S が来たら
+    そこで切り分ける、という仕様と等価)。ヘッダー行が 1 つも無い本文は分割せず、そのまま後続の
+    parse_signal に渡して従来どおり判定させる。
+    """
+
+    lines = raw_text.splitlines()
+    header_indices = [index for index, line in enumerate(lines) if HEADER_PATTERN.match(line.strip())]
+    if not header_indices:
+        return [raw_text]
+    # 先頭ヘッダーより前の行 (通常は存在しない) は最初のブロックへ含め、単一メッセージの従来挙動を保つ
+    starts = [0] + header_indices[1:]
+    ends = header_indices[1:] + [len(lines)]
+    return ["\n".join(lines[start:end]) for start, end in zip(starts, ends)]
+
+
+def parse_signal_blocks(raw_text: str, signal_timezone: ZoneInfo) -> list[SignalBlockResult]:
+    """本文を定型ブロックへ分割し、各ブロックを独立にパースした結果を出現順で返す。
+
+    1 ブロックがパース失敗しても他ブロックの処理は継続し、ブロック単位で成功/失敗を切り分ける。
+    """
+
+    results: list[SignalBlockResult] = []
+    for block_index, block_text in enumerate(split_signal_blocks(raw_text), start=1):
+        try:
+            signal = parse_signal(block_text, signal_timezone)
+            results.append(SignalBlockResult(block_index=block_index, signal=signal, error=None))
+        except SignalParseError as error:
+            results.append(SignalBlockResult(block_index=block_index, signal=None, error=str(error)))
+    return results
+
+
 def parse_signal(raw_text: str, signal_timezone: ZoneInfo) -> ParsedSignalData:
-    """Telegram 本文を正規化済みシグナルへ変換する。"""
+    """Telegram 本文を正規化済みシグナルへ変換する (1 シグナル分)。"""
 
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     if not lines:

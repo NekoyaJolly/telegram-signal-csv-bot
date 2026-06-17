@@ -14,8 +14,8 @@ from src.database import (
     save_rejected_message,
     utc_now_iso,
 )
-from src.models import RawMessageInput
-from src.parser import SignalParseError, parse_signal
+from src.models import RawMessageInput, SignalBlockResult
+from src.parser import parse_signal_blocks
 
 
 @dataclass(frozen=True)
@@ -81,28 +81,50 @@ def process_manual_message(
                 raw_update_json=None,
             ),
         )
-        try:
-            signal = parse_signal(raw_text, config.signal_timezone)
-        except SignalParseError as error:
-            save_rejected_message(connection, raw_result.raw_message_id, str(error))
-            append_rejected_signal_row(
-                connection,
-                config.rejected_csv_output_path,
-                raw_result.raw_message_id,
-            )
-            return ManualProcessResult(
-                raw_message_id=raw_result.raw_message_id,
-                status="rejected",
-                detail=str(error),
-            )
+        # 1メッセージに複数シグナルが連結されることがあるため、ブロック単位で成功/失敗を切り分ける
+        results = parse_signal_blocks(raw_text, config.signal_timezone)
+        parsed_results = [result for result in results if result.signal is not None]
+        rejected_results = [result for result in results if result.signal is None]
 
-        save_parsed_signal(connection, raw_result.raw_message_id, signal)
-        append_parsed_signal_row(connection, config.csv_output_path, raw_result.raw_message_id)
+        for result in results:
+            if result.signal is not None:
+                save_parsed_signal(connection, raw_result.raw_message_id, result.block_index, result.signal)
+            elif result.error is not None:
+                save_rejected_message(connection, raw_result.raw_message_id, result.block_index, result.error)
+        if parsed_results:
+            append_parsed_signal_row(connection, config.csv_output_path, raw_result.raw_message_id)
+        if rejected_results:
+            append_rejected_signal_row(connection, config.rejected_csv_output_path, raw_result.raw_message_id)
+
         return ManualProcessResult(
             raw_message_id=raw_result.raw_message_id,
-            status="parsed",
-            detail=signal.entry_type,
+            status=_manual_status(parsed_results, rejected_results),
+            detail=_manual_detail(parsed_results, rejected_results),
         )
+
+
+def _manual_status(
+    parsed_results: list[SignalBlockResult], rejected_results: list[SignalBlockResult]
+) -> str:
+    if parsed_results and rejected_results:
+        return "partial"
+    if parsed_results:
+        return "parsed"
+    return "rejected"
+
+
+def _manual_detail(
+    parsed_results: list[SignalBlockResult], rejected_results: list[SignalBlockResult]
+) -> str:
+    if parsed_results and rejected_results:
+        return f"parsed={len(parsed_results)} rejected={len(rejected_results)}"
+    if parsed_results:
+        if len(parsed_results) == 1 and parsed_results[0].signal is not None:
+            return parsed_results[0].signal.entry_type
+        return f"parsed={len(parsed_results)}"
+    if len(rejected_results) == 1:
+        return rejected_results[0].error or ""
+    return f"rejected={len(rejected_results)}"
 
 
 if __name__ == "__main__":

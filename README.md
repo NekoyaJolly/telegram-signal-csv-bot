@@ -19,6 +19,8 @@ flowchart TD
 
 `copyMessage` に失敗しても、SQLite 保存、パース、CSV 出力は継続します。
 
+1 つのメッセージに複数シグナルが連結されて届く場合 (「B/S ヘッダー 〜 時刻行」の定型が、時刻行の直後に空行なしで次の B/S ヘッダーへ続く形) は、B/S ヘッダーを境界に 1 シグナルずつへ分割して個別に保存します。分割後の各ブロックは独立にパースされ、成功ブロックは `parsed_signals`、失敗ブロックは `rejected_messages` へ振り分けます (1 メッセージ内で成功・失敗が混在しても構いません)。
+
 ## セットアップ
 
 実行場所: プロジェクトルート
@@ -122,7 +124,7 @@ python -m scripts.init_db
 
 ## ローカルDBリセット
 
-Entry複数点対応などのスキーマ変更後に、古い `data/signals.sqlite3` が残っていると次のようなエラーになります。
+Entry複数点対応や複数シグナル分割対応 (`parsed_signals` / `rejected_messages` への `block_index` 追加) などのスキーマ変更後に、古い `data/signals.sqlite3` が残っていると次のようなエラーになります。
 
 ```txt
 sqlite3.OperationalError: table parsed_signals has no column named entry1
@@ -308,6 +310,8 @@ CSV は UTF-8 BOM 付きで出力します。
 ```txt
 signal_id,source,telegram_chat_id,telegram_message_id,side,symbol,timeframe,entry_type,entry_min,entry_max,entry_raw,entry1,entry2,entry3,entry4,entry5,tp1,tp2,tp3,tp4,tp5,sl,signal_time,signal_time_utc,received_at,raw_text
 ```
+
+`signal_id` は 1 メッセージ 1 シグナルなら `{telegram_chat_id}_{telegram_message_id}` です。1 メッセージに複数シグナルが含まれる場合のみ、末尾にメッセージ内のブロック番号 (1始まり) を付与して `{telegram_chat_id}_{telegram_message_id}_{n}` とし、行を一意にします。`trade_signals.csv` と `rejected_signals.csv` でそれぞれ、同一メッセージ内の該当行が複数あるときに採番します。
 
 ## テスト
 

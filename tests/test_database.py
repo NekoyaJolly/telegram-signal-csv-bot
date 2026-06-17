@@ -46,7 +46,7 @@ def test_parsed_signal_can_be_saved(tmp_path: Path) -> None:
     connection = _connection(tmp_path)
     raw_id = save_raw_message(connection, _raw_message()).raw_message_id
 
-    parsed_id = save_parsed_signal(connection, raw_id, _parsed_signal())
+    parsed_id = save_parsed_signal(connection, raw_id, 1, _parsed_signal())
     row = connection.execute(
         "SELECT side, entry_type, entry1, entry2, entry3, entry4, entry5 FROM parsed_signals WHERE id = ?",
         (parsed_id,),
@@ -61,11 +61,26 @@ def test_parsed_signal_can_be_saved(tmp_path: Path) -> None:
     assert row["entry5"] is None
 
 
+def test_multiple_parsed_signals_per_message_are_saved(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    raw_id = save_raw_message(connection, _raw_message()).raw_message_id
+
+    first_id = save_parsed_signal(connection, raw_id, 1, _parsed_signal())
+    second_id = save_parsed_signal(connection, raw_id, 2, _parsed_signal())
+    rows = connection.execute(
+        "SELECT block_index FROM parsed_signals WHERE raw_message_id = ? ORDER BY block_index",
+        (raw_id,),
+    ).fetchall()
+
+    assert first_id != second_id
+    assert [row["block_index"] for row in rows] == [1, 2]
+
+
 def test_rejected_message_can_be_saved(tmp_path: Path) -> None:
     connection = _connection(tmp_path)
     raw_id = save_raw_message(connection, _raw_message()).raw_message_id
 
-    rejected_id = save_rejected_message(connection, raw_id, "Entry 行がありません")
+    rejected_id = save_rejected_message(connection, raw_id, 1, "Entry 行がありません")
     row = connection.execute("SELECT reason FROM rejected_messages WHERE id = ?", (rejected_id,)).fetchone()
 
     assert row["reason"] == "Entry 行がありません"
